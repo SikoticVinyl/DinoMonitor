@@ -1,10 +1,13 @@
 import discord
 from discord.ext import commands
 import requests
+import os
+from dotenv import load_dotenv
 
-# Replace 'YOUR_BOT_TOKEN' with your bot's token
-TOKEN = 'YOUR_BOT_TOKEN'
-STEAM_API_KEY = 'YOUR_STEAM_API_KEY'
+# Load environment variables from .env file
+load_dotenv()
+TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+STEAM_API_KEY = os.getenv('STEAM_API_KEY')
 
 intents = discord.Intents.default()
 intents.message_content = True
