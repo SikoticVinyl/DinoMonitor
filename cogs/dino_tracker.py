@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import sqlite3
+import asyncio
 from datetime import datetime
 from typing import List, Optional
 
@@ -34,99 +35,6 @@ class RegionView(discord.ui.View):
         await interaction.response.defer()
         self.value = select.values[0]
         self.stop()
-
-class DinoTracker(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.conn = sqlite3.connect('dino_tracker.db')
-        self.create_tables()
-
-    def create_tables(self):
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS dino_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                discord_id INTEGER,
-                account_name TEXT,
-                server TEXT,
-                dinosaur TEXT,
-                is_nested BOOLEAN,
-                date_updated TIMESTAMP
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS mutations (
-                record_id INTEGER,
-                mutation TEXT,
-                FOREIGN KEY (record_id) REFERENCES dino_records(id)
-            )
-        ''')
-        self.conn.commit()
-
-    import discord
-from discord import app_commands
-from discord.ext import commands
-import sqlite3
-from datetime import datetime
-from typing import List, Optional
-
-EVRIMA_SERVERS = {
-    "Americas": ["NA 2 - West No AI", "NA 3 - West", "NA 4 - East", "NA 5- East", "CA 1 - Central", "SA 1 - East", "SA 2 - East"],
-    "Europe": ["EU 1 - West", "EU 2 - West", "EU 3 - West", "EU 4 - Central No AI", "EU 5 - North", "EU 6 - South"],
-    "Asia": ["AS 1 - South East", "AS 2 - South", "AS 3 - East"],
-    "Australia": ["AU 1 - East"]
-}
-DINOSAURS = {
-    "Carnivores": ["Carnotaurus", "Ceratosaurus", "Deinosuchus", "Dilophosaurus", "Herrerasaurus", "Omniraptor", "Pteranodon", "Troodon",],
-    "Herbivores": ["Diabloceratops", "Dryosaurus", "Hypsilophodon", "Pachycephalosaurus", "Stegosaurus", "Tenontosaurus"],
-    "Omnivores": ["Bepiposaurus", "Gallimimus", ]
-}
-
-MUTATIONS = {
-    "Carnivores": ["Mutation1", "Mutation2", "Mutation3"],
-    "Herbivores": ["Mutation4", "Mutation5", "Mutation6"],
-    "Omnivores": ["Mutation7", "Mutation8", "Mutation9"],
-    "All": ["Mutation10", "Mutation11", "Mutation12"]
-}
-
-class RegionView(discord.ui.View):
-    def __init__(self, timeout=180):
-        super().__init__(timeout=timeout)
-        self.value = None
-
-    @discord.ui.select(placeholder="Choose a region", options=[discord.SelectOption(label=region, value=region) for region in EVRIMA_SERVERS.keys()])
-    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
-        await interaction.response.defer()
-        self.value = select.values[0]
-        self.stop()
-
-class DinoTracker(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.conn = sqlite3.connect('dino_tracker.db')
-        self.create_tables()
-
-    def create_tables(self):
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS dino_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                discord_id INTEGER,
-                account_name TEXT,
-                server TEXT,
-                dinosaur TEXT,
-                is_nested BOOLEAN,
-                date_updated TIMESTAMP
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS mutations (
-                record_id INTEGER,
-                mutation TEXT,
-                FOREIGN KEY (record_id) REFERENCES dino_records(id)
-            )
-        ''')
-        self.conn.commit()
 
 import discord
 from discord import app_commands

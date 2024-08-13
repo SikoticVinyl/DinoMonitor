@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import sqlite3
+import asyncio
 
 class Settings(commands.Cog):
     def __init__(self, bot):
