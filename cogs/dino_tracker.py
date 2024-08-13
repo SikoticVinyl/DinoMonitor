@@ -24,6 +24,17 @@ MUTATIONS = {
     "All": ["Mutation10", "Mutation11", "Mutation12"]
 }
 
+class RegionView(discord.ui.View):
+    def __init__(self, timeout=180):
+        super().__init__(timeout=timeout)
+        self.value = None
+
+    @discord.ui.select(placeholder="Choose a region", options=[discord.SelectOption(label=region, value=region) for region in EVRIMA_SERVERS.keys()])
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await interaction.response.defer()
+        self.value = select.values[0]
+        self.stop()
+
 class DinoTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -206,42 +217,56 @@ class DinoTracker(commands.Cog):
         interaction = await self.bot.wait_for("interaction", check=check)
         return interaction.data["values"]
 
-    @app_commands.command(name="server_info", description="View dinosaur information for a server")
+    @app_commands.command(name="server_info", description="View dinosaur information for a region")
     async def server_info(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer()
-            
-            # Select region
-            region = await self.select_region(interaction)
+        await interaction.response.defer(ephemeral=True)
+        
+        # Select region (this remains ephemeral)
+        region = await self.select_region(interaction)
 
-            if region not in EVRIMA_SERVERS:
-                await interaction.followup.send("Invalid region. Please choose from: " + ", ".join(EVRIMA_SERVERS.keys()))
-                return
+        if not region:
+            return
 
-            servers = EVRIMA_SERVERS[region]
-            cursor = self.conn.cursor()
+        if region not in EVRIMA_SERVERS:
+            await interaction.followup.send("Invalid region. Please choose from: " + ", ".join(EVRIMA_SERVERS.keys()), ephemeral=True)
+            return
 
-            embed = discord.Embed(title=f"Dinosaur Information for {region}", color=discord.Color.blue())
+        servers = EVRIMA_SERVERS[region]
+        cursor = self.conn.cursor()
 
-            for server in servers:
-                cursor.execute('''
-                    SELECT dinosaur, is_nested, COUNT(*) as count
-                    FROM dino_records
-                    WHERE server = ?
-                    GROUP BY dinosaur, is_nested
-                ''', (server,))
-                results = cursor.fetchall()
+        embed = discord.Embed(title=f"Dinosaur Information for {region}", color=discord.Color.blue())
 
-                if results:
-                    server_info = "\n".join([f"{dino}({'N' if nested else ''}) - {count}" for dino, nested, count in results])
-                    total_dinos = sum([count for _, _, count in results])
-                    embed.add_field(name=f"{server} - {total_dinos} dinos", value=server_info, inline=False)
-                else:
-                    embed.add_field(name=server, value="No data available", inline=False)
+        for server in servers:
+            cursor.execute('''
+                SELECT dinosaur, is_nested, COUNT(*) as count
+                FROM dino_records
+                WHERE server = ?
+                GROUP BY dinosaur, is_nested
+            ''', (server,))
+            results = cursor.fetchall()
 
-            await interaction.followup.send(embed=embed)
-        except Exception as e:
-            await interaction.followup.send(f"An error occurred: {str(e)}")
+            if results:
+                server_info = "\n".join([f"{dino}({'N' if nested else ''}) - {count}" for dino, nested, count in results])
+                total_dinos = sum([count for _, _, count in results])
+                embed.add_field(name=f"{server} - {total_dinos} dinos", value=server_info, inline=False)
+            else:
+                embed.add_field(name=server, value="No data available", inline=False)
+
+        # Send the final embed as a public message
+        await interaction.followup.send(embed=embed, ephemeral=False)
+
+    async def select_region(self, interaction: discord.Interaction) -> Optional[str]:
+        view = RegionView()
+        message = await interaction.followup.send("Select a region:", view=view, ephemeral=True)
+
+        await view.wait()
+        await message.delete()
+
+        if view.value is None:
+            await interaction.followup.send("Selection timed out. Please try again.", ephemeral=True)
+            return None
+
+        return view.value
 
 async def setup(bot):
     await bot.add_cog(DinoTracker(bot))
