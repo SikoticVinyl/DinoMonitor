@@ -13,9 +13,18 @@ class DinoBot(commands.Bot):
         super().__init__(command_prefix='!', intents=intents)
 
     async def setup_hook(self):
-        for filename in os.listdir('./cogs'):
-            if filename.endswith('.py'):
-                await self.load_extension(f'cogs.{filename[:-3]}')
+        # Cog loading logic
+        cogs_folder = './cogs'
+        if os.path.exists(cogs_folder) and os.path.isdir(cogs_folder):
+            for filename in os.listdir(cogs_folder):
+                if filename.endswith('.py'):
+                    try:
+                        await self.load_extension(f'cogs.{filename[:-3]}')
+                        print(f'Loaded extension: {filename[:-3]}')
+                    except Exception as e:
+                        print(f'Failed to load extension {filename[:-3]}: {e}')
+        else:
+            print('No cogs found. Skipping cog loading.')
         
         await self.tree.sync()
 
