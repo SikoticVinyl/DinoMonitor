@@ -33,13 +33,6 @@ class DinoTracker(commands.Cog):
     def create_tables(self):
         cursor = self.conn.cursor()
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS accounts (
-                discord_id INTEGER,
-                account_name TEXT,
-                PRIMARY KEY (discord_id, account_name)
-            )
-        ''')
-        cursor.execute('''
             CREATE TABLE IF NOT EXISTS dino_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 discord_id INTEGER,
@@ -59,25 +52,23 @@ class DinoTracker(commands.Cog):
         ''')
         self.conn.commit()
 
-    @app_commands.command(name="add_alt", description="Add an alternate account")
-    async def add_alt(self, interaction: discord.Interaction, account_name: str):
-        cursor = self.conn.cursor()
-        cursor.execute("INSERT OR IGNORE INTO accounts (discord_id, account_name) VALUES (?, ?)",
-                       (interaction.user.id, account_name))
-        self.conn.commit()
-        await interaction.response.send_message(f"Added alternate account: {account_name}")
-
     @app_commands.command(name="update_dino", description="Update your dinosaur information")
     async def update_dino(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
         # Check for alt accounts
         cursor = self.conn.cursor()
-        cursor.execute("SELECT account_name FROM accounts WHERE discord_id = ?", (interaction.user.id,))
-        alt_accounts = cursor.fetchall()
+        cursor.execute("SELECT alt_accounts_enabled FROM user_settings WHERE discord_id = ?", (interaction.user.id,))
+        result = cursor.fetchone()
+        alt_accounts_enabled = result[0] if result else False
 
-        if alt_accounts:
-            account_name = await self.select_account(interaction, alt_accounts)
+        if alt_accounts_enabled:
+            cursor.execute("SELECT account_name FROM alt_accounts WHERE discord_id = ?", (interaction.user.id,))
+            alt_accounts = cursor.fetchall()
+            if alt_accounts:
+                account_name = await self.select_account(interaction, alt_accounts)
+            else:
+                account_name = "main"
         else:
             account_name = "main"
 
@@ -95,7 +86,14 @@ class DinoTracker(commands.Cog):
         if is_nested:
             mutations = await self.select_mutations(interaction, dinosaur)
 
-        # Save to database
+        # Remove previous entry for this account on this server
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            DELETE FROM dino_records
+            WHERE discord_id = ? AND account_name = ? AND server = ?
+        ''', (interaction.user.id, account_name, server))
+
+        # Save new entry to database
         cursor.execute('''
             INSERT INTO dino_records (discord_id, account_name, server, dinosaur, is_nested, date_updated)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -119,6 +117,20 @@ class DinoTracker(commands.Cog):
         view.add_item(select_menu)
 
         await interaction.followup.send("Select an account:", view=view)
+
+        def check(i):
+            return i.user.id == interaction.user.id and i.data["custom_id"] == select_menu.custom_id
+
+        interaction = await self.bot.wait_for("interaction", check=check)
+        return interaction.data["values"][0]
+    
+    async def select_region(self, interaction: discord.Interaction) -> str:
+        options = [discord.SelectOption(label=region, value=region) for region in EVRIMA_SERVERS.keys()]
+        select_menu = discord.ui.Select(placeholder="Choose a region", options=options)
+        view = discord.ui.View()
+        view.add_item(select_menu)
+
+        await interaction.followup.send("Select a region:", view=view)
 
         def check(i):
             return i.user.id == interaction.user.id and i.data["custom_id"] == select_menu.custom_id
@@ -195,32 +207,41 @@ class DinoTracker(commands.Cog):
         return interaction.data["values"]
 
     @app_commands.command(name="server_info", description="View dinosaur information for a server")
-    async def server_info(self, interaction: discord.Interaction, region: str):
-        if region not in EVRIMA_SERVERS:
-            await interaction.response.send_message("Invalid region. Please choose from: " + ", ".join(EVRIMA_SERVERS.keys()))
-            return
+    async def server_info(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer()
+            
+            # Select region
+            region = await self.select_region(interaction)
 
-        servers = EVRIMA_SERVERS[region]
-        cursor = self.conn.cursor()
+            if region not in EVRIMA_SERVERS:
+                await interaction.followup.send("Invalid region. Please choose from: " + ", ".join(EVRIMA_SERVERS.keys()))
+                return
 
-        embed = discord.Embed(title=f"Dinosaur Information for {region}", color=discord.Color.blue())
+            servers = EVRIMA_SERVERS[region]
+            cursor = self.conn.cursor()
 
-        for server in servers:
-            cursor.execute('''
-                SELECT dinosaur, COUNT(*) as count, GROUP_CONCAT(account_name) as players
-                FROM dino_records
-                WHERE server = ?
-                GROUP BY dinosaur
-            ''', (server,))
-            results = cursor.fetchall()
+            embed = discord.Embed(title=f"Dinosaur Information for {region}", color=discord.Color.blue())
 
-            if results:
-                server_info = "\n".join([f"{dino}: {count} ({players})" for dino, count, players in results])
-                embed.add_field(name=server, value=server_info, inline=False)
-            else:
-                embed.add_field(name=server, value="No data available", inline=False)
+            for server in servers:
+                cursor.execute('''
+                    SELECT dinosaur, is_nested, COUNT(*) as count
+                    FROM dino_records
+                    WHERE server = ?
+                    GROUP BY dinosaur, is_nested
+                ''', (server,))
+                results = cursor.fetchall()
 
-        await interaction.response.send_message(embed=embed)
+                if results:
+                    server_info = "\n".join([f"{dino}({'N' if nested else ''}) - {count}" for dino, nested, count in results])
+                    total_dinos = sum([count for _, _, count in results])
+                    embed.add_field(name=f"{server} - {total_dinos} dinos", value=server_info, inline=False)
+                else:
+                    embed.add_field(name=server, value="No data available", inline=False)
+
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred: {str(e)}")
 
 async def setup(bot):
     await bot.add_cog(DinoTracker(bot))
