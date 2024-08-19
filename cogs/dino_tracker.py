@@ -329,5 +329,40 @@ class DinoTracker(commands.Cog):
 
         return view.value
 
+    @app_commands.command(name="my_dinos", description="View all your dinosaurs across servers")
+    async def my_dinos(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT dr.account_name, dr.server, dr.dinosaur, dr.is_nested, dr.date_updated, GROUP_CONCAT(m.mutation, ', ') as mutations
+            FROM dino_records dr
+            LEFT JOIN mutations m ON dr.id = m.record_id
+            WHERE dr.discord_id = ?
+            GROUP BY dr.id
+            ORDER BY dr.date_updated DESC
+        ''', (interaction.user.id,))
+        
+        results = cursor.fetchall()
+
+        if not results:
+            await interaction.followup.send("You don't have any dinosaurs recorded.", ephemeral=True)
+            return
+
+        embeds = []
+        for i, (account_name, server, dinosaur, is_nested, date_updated, mutations) in enumerate(results):
+            embed = discord.Embed(title=f"Dinosaur {i+1}", color=discord.Color.green())
+            embed.add_field(name="Account", value=account_name, inline=True)
+            embed.add_field(name="Server", value=server, inline=True)
+            embed.add_field(name="Dinosaur", value=dinosaur, inline=True)
+            embed.add_field(name="Nested", value="Yes" if is_nested else "No", inline=True)
+            embed.add_field(name="Last Updated", value=date_updated, inline=True)
+            if mutations:
+                embed.add_field(name="Mutations", value=mutations, inline=False)
+            embeds.append(embed)
+
+        paginator = pages.Paginator(pages=embeds, timeout=180)
+        await paginator.respond(interaction, ephemeral=True)
+
 async def setup(bot):
     await bot.add_cog(DinoTracker(bot))

@@ -39,7 +39,7 @@ class Settings(commands.Cog):
         self.conn.commit()
         
         if enable:
-            await interaction.response.send_message("Alt accounts feature has been enabled. How many alt accounts do you want to set up? (Max 10)")
+            await interaction.response.send_message("Alt accounts feature has been enabled. How many alt accounts do you want to set up? (Max 10)", ephemeral=True)
             
             def check(m):
                 return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id
@@ -49,7 +49,7 @@ class Settings(commands.Cog):
                 num_alts = int(num_alts_msg.content)
                 
                 if num_alts < 1 or num_alts > 10:
-                    await interaction.followup.send("Please enter a number between 1 and 10. You can adjust this later using the /set_num_alts command.")
+                    await interaction.followup.send("Please enter a number between 1 and 10. You can adjust this later using the /set_num_alts command.", ephemeral=True)
                     return
 
                 cursor.execute("""
@@ -57,10 +57,10 @@ class Settings(commands.Cog):
                 """, (num_alts, interaction.user.id))
                 self.conn.commit()
 
-                await interaction.followup.send(f"Great! You've set up {num_alts} alt accounts. Let's name them now.")
+                await interaction.followup.send(f"Great! You've set up {num_alts} alt accounts. Let's name them now.", ephemeral=True)
 
                 for i in range(1, num_alts + 1):
-                    await interaction.followup.send(f"Please enter a name for alt account #{i}:")
+                    await interaction.followup.send(f"Please enter a name for alt account #{i}:", ephemeral=True)
                     name_msg = await self.bot.wait_for('message', check=check, timeout=30.0)
                     name = name_msg.content
 
@@ -70,19 +70,19 @@ class Settings(commands.Cog):
                     """, (interaction.user.id, name))
                     self.conn.commit()
 
-                await interaction.followup.send("All alt accounts have been set up successfully!")
+                await interaction.followup.send("All alt accounts have been set up successfully!", ephemeral=True)
 
             except asyncio.TimeoutError:
-                await interaction.followup.send("You didn't respond in time. You can set up your alt accounts later using the /set_num_alts and /name_alt commands.")
+                await interaction.followup.send("You didn't respond in time. You can set up your alt accounts later using the /set_num_alts and /name_alt commands.", ephemeral=True)
             except ValueError:
-                await interaction.followup.send("Invalid input. Please use the /set_num_alts command to try again.")
+                await interaction.followup.send("Invalid input. Please use the /set_num_alts command to try again.", ephemeral=True)
         else:
-            await interaction.response.send_message("Alt accounts feature has been disabled.")
+            await interaction.response.send_message("Alt accounts feature has been disabled.", ephemeral=True)
 
     @app_commands.command(name="set_num_alts", description="Set the number of alt accounts")
     async def set_num_alts(self, interaction: discord.Interaction, num_alts: int):
         if num_alts < 0 or num_alts > 10:
-            await interaction.response.send_message("Please enter a number between 0 and 10.")
+            await interaction.response.send_message("Please enter a number between 0 and 10.", ephemeral=True)
             return
 
         cursor = self.conn.cursor()
@@ -95,7 +95,7 @@ class Settings(commands.Cog):
         cursor.execute("DELETE FROM alt_accounts WHERE discord_id = ?", (interaction.user.id,))
         self.conn.commit()
 
-        await interaction.response.send_message(f"Number of alt accounts set to {num_alts}. Use the /name_alt command to name your accounts.")
+        await interaction.response.send_message(f"Number of alt accounts set to {num_alts}. Use the /name_alt command to name your accounts.", ephemeral=True)
 
     @app_commands.command(name="name_alt", description="Name an alt account")
     async def name_alt(self, interaction: discord.Interaction, alt_number: int, name: str):
@@ -104,7 +104,7 @@ class Settings(commands.Cog):
         result = cursor.fetchone()
 
         if not result or alt_number > result[0]:
-            await interaction.response.send_message("Invalid alt account number.")
+            await interaction.response.send_message("Invalid alt account number.", ephemeral=True)
             return
 
         cursor.execute("""
@@ -113,7 +113,7 @@ class Settings(commands.Cog):
         """, (interaction.user.id, name))
         self.conn.commit()
 
-        await interaction.response.send_message(f"Alt account {alt_number} named as '{name}'.")
+        await interaction.response.send_message(f"Alt account {alt_number} named as '{name}'.", ephemeral=True)
 
     @app_commands.command(name="list_alts", description="List all your alt accounts")
     async def list_alts(self, interaction: discord.Interaction):
@@ -122,11 +122,11 @@ class Settings(commands.Cog):
         results = cursor.fetchall()
 
         if not results:
-            await interaction.response.send_message("You haven't set up any alt accounts yet.")
+            await interaction.response.send_message("You haven't set up any alt accounts yet.", ephemeral=True)
             return
 
         alt_list = "\n".join([f"{i+1}. {name[0]}" for i, name in enumerate(results)])
-        await interaction.response.send_message(f"Your alt accounts:\n{alt_list}")
+        await interaction.response.send_message(f"Your alt accounts:\n{alt_list}", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Settings(bot))
