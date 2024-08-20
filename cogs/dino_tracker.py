@@ -58,6 +58,60 @@ class BackView(discord.ui.View):
         self.value = "back"
         self.stop()
 
+class DinoTrackerView(discord.ui.View):
+    def __init__(self, cog: 'DinoTracker', user_id: int):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.cog = cog
+        self.user_id = user_id
+        self.current_account = None
+        self.current_page = 0
+        self.embeds = []
+
+    async def setup(self):
+        accounts = await self.cog.get_user_accounts(self.user_id)
+        self.account_select.options = [
+            discord.SelectOption(label=account, value=account) for account in accounts
+        ]
+
+    @discord.ui.select(placeholder="Select an account", row=0)
+    async def account_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await interaction.response.defer()
+        self.current_account = select.values[0]
+        self.current_page = 0
+        await self.update_dino_display(interaction)
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.gray, disabled=True, row=1)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        self.current_page = max(0, self.current_page - 1)
+        await self.update_dino_display(interaction)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.gray, disabled=True, row=1)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        self.current_page = min(len(self.embeds) - 1, self.current_page + 1)
+        await self.update_dino_display(interaction)
+
+    @discord.ui.button(label="Done", style=discord.ButtonStyle.red, row=1)
+    async def done_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await interaction.delete_original_response()
+        self.stop()
+
+    async def update_dino_display(self, interaction: discord.Interaction):
+        if self.current_account:
+            self.embeds = await self.cog.get_account_dinos(self.user_id, self.current_account)
+            if self.embeds:
+                embed = self.embeds[self.current_page]
+                embed.set_footer(text=f"Page {self.current_page + 1}/{len(self.embeds)}")
+                self.previous_button.disabled = (self.current_page == 0)
+                self.next_button.disabled = (self.current_page == len(self.embeds) - 1)
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.edit_original_response(content=f"No dinosaurs found for account: {self.current_account}", embed=None, view=self)
+        else:
+            await interaction.edit_original_response(content="Please select an account", embed=None, view=self)
+
 class DinoTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -328,40 +382,24 @@ class DinoTracker(commands.Cog):
             return None
 
         return view.value
-
-    @app_commands.command(name="my_dinos", description="View your most recent dinosaurs for each server on a specific account")
+    
+    @app_commands.command(name="my_dinos", description="View your dinosaurs across accounts and servers")
     async def my_dinos(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        view = DinoTrackerView(self, interaction.user.id)
+        await view.setup()
+        await interaction.response.send_message("Loading your dinosaurs...", view=view, ephemeral=True)
+        await view.update_dino_display(interaction)
 
-        # Fetch all accounts for the user
+    async def get_user_accounts(self, user_id: int) -> list:
         cursor = self.conn.cursor()
         cursor.execute('''
             SELECT DISTINCT account_name
             FROM dino_records
             WHERE discord_id = ?
-        ''', (interaction.user.id,))
-        accounts = cursor.fetchall()
+        ''', (user_id,))
+        return [row[0] for row in cursor.fetchall()]
 
-        if not accounts:
-            await interaction.followup.send("You don't have any dinosaurs recorded.", ephemeral=True)
-            return
-
-        # Create account selection view
-        options = [discord.SelectOption(label=account[0], value=account[0]) for account in accounts]
-        account_select = discord.ui.Select(placeholder="Choose an account", options=options)
-        
-        async def account_callback(account_interaction: discord.Interaction):
-            await account_interaction.response.defer()
-            selected_account = account_select.values[0]
-            await self.show_account_dinos(interaction, selected_account)
-
-        account_select.callback = account_callback
-        view = discord.ui.View()
-        view.add_item(account_select)
-
-        await interaction.followup.send("Select an account to view your dinosaurs:", view=view, ephemeral=True)
-
-    async def show_account_dinos(self, interaction: discord.Interaction, account_name: str):
+    async def get_account_dinos(self, user_id: int, account_name: str) -> list:
         cursor = self.conn.cursor()
         cursor.execute('''
             SELECT dr1.server, dr1.dinosaur, dr1.is_nested, dr1.date_updated, GROUP_CONCAT(m.mutation, ', ') as mutations
@@ -377,16 +415,11 @@ class DinoTracker(commands.Cog):
             )
             GROUP BY dr1.server
             ORDER BY dr1.date_updated DESC
-        ''', (interaction.user.id, account_name))
+        ''', (user_id, account_name))
         
         results = cursor.fetchall()
-
-        if not results:
-            await interaction.followup.send(f"No dinosaurs found for account: {account_name}", ephemeral=True)
-            return
-
         embeds = []
-        for i, (server, dinosaur, is_nested, date_updated, mutations) in enumerate(results):
+        for server, dinosaur, is_nested, date_updated, mutations in results:
             embed = discord.Embed(title=f"Dinosaur on {server}", color=discord.Color.green())
             embed.add_field(name="Account", value=account_name, inline=True)
             embed.add_field(name="Dinosaur", value=dinosaur, inline=True)
@@ -395,41 +428,7 @@ class DinoTracker(commands.Cog):
             if mutations:
                 embed.add_field(name="Mutations", value=mutations, inline=False)
             embeds.append(embed)
-
-        await self.send_paginated_embeds(interaction, embeds)
-
-    async def send_paginated_embeds(self, interaction: discord.Interaction, embeds: list):
-        current_page = 0
-
-        async def update_message(i: discord.Interaction, page: int):
-            embed = embeds[page]
-            embed.set_footer(text=f"Page {page + 1}/{len(embeds)}")
-            await i.response.edit_message(embed=embed, view=view)
-
-        async def previous_page(i: discord.Interaction):
-            nonlocal current_page
-            current_page = max(0, current_page - 1)
-            await update_message(i, current_page)
-
-        async def next_page(i: discord.Interaction):
-            nonlocal current_page
-            current_page = min(len(embeds) - 1, current_page + 1)
-            await update_message(i, current_page)
-
-        view = discord.ui.View(timeout=180)
-        view.add_item(discord.ui.Button(label="Previous", style=discord.ButtonStyle.gray, custom_id="previous", disabled=True))
-        view.add_item(discord.ui.Button(label="Next", style=discord.ButtonStyle.gray, custom_id="next", disabled=len(embeds) == 1))
-
-        for item in view.children:
-            if isinstance(item, discord.ui.Button):
-                if item.custom_id == "previous":
-                    item.callback = previous_page
-                elif item.custom_id == "next":
-                    item.callback = next_page
-
-        initial_embed = embeds[0]
-        initial_embed.set_footer(text=f"Page 1/{len(embeds)}")
-        await interaction.followup.send(embed=initial_embed, view=view, ephemeral=True)
+        return embeds
 
 
 async def setup(bot):
