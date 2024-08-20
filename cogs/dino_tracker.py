@@ -329,31 +329,66 @@ class DinoTracker(commands.Cog):
 
         return view.value
 
-    @app_commands.command(name="my_dinos", description="View all your dinosaurs across servers")
+    @app_commands.command(name="my_dinos", description="View your most recent dinosaurs for each server on a specific account")
     async def my_dinos(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
+        # Fetch all accounts for the user
         cursor = self.conn.cursor()
         cursor.execute('''
-            SELECT dr.account_name, dr.server, dr.dinosaur, dr.is_nested, dr.date_updated, GROUP_CONCAT(m.mutation, ', ') as mutations
-            FROM dino_records dr
-            LEFT JOIN mutations m ON dr.id = m.record_id
-            WHERE dr.discord_id = ?
-            GROUP BY dr.id
-            ORDER BY dr.date_updated DESC
+            SELECT DISTINCT account_name
+            FROM dino_records
+            WHERE discord_id = ?
         ''', (interaction.user.id,))
+        accounts = cursor.fetchall()
+
+        if not accounts:
+            await interaction.followup.send("You don't have any dinosaurs recorded.", ephemeral=True)
+            return
+
+        # Create account selection view
+        options = [discord.SelectOption(label=account[0], value=account[0]) for account in accounts]
+        account_select = discord.ui.Select(placeholder="Choose an account", options=options)
+        
+        async def account_callback(account_interaction: discord.Interaction):
+            await account_interaction.response.defer()
+            selected_account = account_select.values[0]
+            await self.show_account_dinos(interaction, selected_account)
+
+        account_select.callback = account_callback
+        view = discord.ui.View()
+        view.add_item(account_select)
+
+        await interaction.followup.send("Select an account to view your dinosaurs:", view=view, ephemeral=True)
+
+    async def show_account_dinos(self, interaction: discord.Interaction, account_name: str):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT dr1.server, dr1.dinosaur, dr1.is_nested, dr1.date_updated, GROUP_CONCAT(m.mutation, ', ') as mutations
+            FROM dino_records dr1
+            LEFT JOIN mutations m ON dr1.id = m.record_id
+            WHERE dr1.discord_id = ? AND dr1.account_name = ?
+            AND dr1.date_updated = (
+                SELECT MAX(dr2.date_updated)
+                FROM dino_records dr2
+                WHERE dr2.discord_id = dr1.discord_id
+                AND dr2.account_name = dr1.account_name
+                AND dr2.server = dr1.server
+            )
+            GROUP BY dr1.server
+            ORDER BY dr1.date_updated DESC
+        ''', (interaction.user.id, account_name))
         
         results = cursor.fetchall()
 
         if not results:
-            await interaction.followup.send("You don't have any dinosaurs recorded.", ephemeral=True)
+            await interaction.followup.send(f"No dinosaurs found for account: {account_name}", ephemeral=True)
             return
 
         embeds = []
-        for i, (account_name, server, dinosaur, is_nested, date_updated, mutations) in enumerate(results):
-            embed = discord.Embed(title=f"Dinosaur {i+1}", color=discord.Color.green())
+        for i, (server, dinosaur, is_nested, date_updated, mutations) in enumerate(results):
+            embed = discord.Embed(title=f"Dinosaur on {server}", color=discord.Color.green())
             embed.add_field(name="Account", value=account_name, inline=True)
-            embed.add_field(name="Server", value=server, inline=True)
             embed.add_field(name="Dinosaur", value=dinosaur, inline=True)
             embed.add_field(name="Nested", value="Yes" if is_nested else "No", inline=True)
             embed.add_field(name="Last Updated", value=date_updated, inline=True)
@@ -361,8 +396,41 @@ class DinoTracker(commands.Cog):
                 embed.add_field(name="Mutations", value=mutations, inline=False)
             embeds.append(embed)
 
-        paginator = pages.Paginator(pages=embeds, timeout=180)
-        await paginator.respond(interaction, ephemeral=True)
+        await self.send_paginated_embeds(interaction, embeds)
+
+    async def send_paginated_embeds(self, interaction: discord.Interaction, embeds: list):
+        current_page = 0
+
+        async def update_message(i: discord.Interaction, page: int):
+            embed = embeds[page]
+            embed.set_footer(text=f"Page {page + 1}/{len(embeds)}")
+            await i.response.edit_message(embed=embed, view=view)
+
+        async def previous_page(i: discord.Interaction):
+            nonlocal current_page
+            current_page = max(0, current_page - 1)
+            await update_message(i, current_page)
+
+        async def next_page(i: discord.Interaction):
+            nonlocal current_page
+            current_page = min(len(embeds) - 1, current_page + 1)
+            await update_message(i, current_page)
+
+        view = discord.ui.View(timeout=180)
+        view.add_item(discord.ui.Button(label="Previous", style=discord.ButtonStyle.gray, custom_id="previous", disabled=True))
+        view.add_item(discord.ui.Button(label="Next", style=discord.ButtonStyle.gray, custom_id="next", disabled=len(embeds) == 1))
+
+        for item in view.children:
+            if isinstance(item, discord.ui.Button):
+                if item.custom_id == "previous":
+                    item.callback = previous_page
+                elif item.custom_id == "next":
+                    item.callback = next_page
+
+        initial_embed = embeds[0]
+        initial_embed.set_footer(text=f"Page 1/{len(embeds)}")
+        await interaction.followup.send(embed=initial_embed, view=view, ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(DinoTracker(bot))
