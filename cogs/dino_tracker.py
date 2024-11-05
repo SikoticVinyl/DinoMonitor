@@ -6,12 +6,21 @@ import asyncio
 from datetime import datetime
 from typing import List, Optional
 
-EVRIMA_SERVERS = {
-    "Americas": ["NA 2 - West No AI", "NA 3 - West", "NA 4 - East", "NA 5- East", "CA 1 - Central", "SA 1 - East", "SA 2 - East"],
-    "Europe": ["EU 1 - West", "EU 2 - West", "EU 3 - West", "EU 4 - Central No AI", "EU 5 - North", "EU 6 - South"],
-    "Asia": ["AS 1 - South East", "AS 2 - South", "AS 3 - East"],
-    "Australia": ["AU 1 - East"]
+GAME_MODES = ["Hordetest", "Evrima Public Branch",]
+
+SERVERS_BY_MODE = {
+    "Hordetest": {
+        "Americas": ["NA 1 - West", "NA 2 - West", "NA 3 - East", "NA 4 - East"],
+        "Europe": ["EU 1 - West", "EU 2 - Central", "EU 3 - Central"],
+    },
+    "Evrima Public Branch": {
+        "Americas": ["NA 2 - West", "NA 3 - West", "NA 4 - East", "NA 5- East", "CA 1 - Central", "SA 1 - East", "SA 2 - East"],
+        "Europe": ["EU 1 - West", "EU 2 - West", "EU 3 - West", "EU 4 - Central", "EU 5 - North", "EU 6 - South"],
+        "Asia": ["AS 1 - South East", "AS 2 - South", "AS 3 - East"],
+        "Australia": ["AU 1 - East"]
+    }
 }
+
 DINOSAURS = {
     "Carnivores": ["Carnotaurus", "Ceratosaurus", "Deinosuchus", "Dilophosaurus", "Herrerasaurus", "Omniraptor", "Pteranodon", "Troodon",],
     "Herbivores": ["Diabloceratops", "Dryosaurus", "Hypsilophodon", "Pachycephalosaurus", "Stegosaurus", "Tenontosaurus"],
@@ -19,21 +28,48 @@ DINOSAURS = {
 }
 
 MUTATIONS = {
-    "Carnivores": ["Mutation1", "Mutation2", "Mutation3"],
-    "Herbivores": ["Mutation4", "Mutation5", "Mutation6"],
+    "Female": ["Advanced Gestation", "Prolific Reproduction", "Mutation3"],
+    "Carnivores": ["Accelerated Prey Drive", "Hypermetabolic Inanition", "Hemomania", "Augmented Tapetum", "Cannibalistic", "Osteophagic"],
+    "Herbivores": ["Barometric Sensitivity", "Photosynthetic Regeneration", "Hypervigilance", "Truculency", "Xerocole Adaptation", "Tactile Endurance"],
     "Omnivores": ["Mutation7", "Mutation8", "Mutation9"],
-    "All": ["Mutation10", "Mutation11", "Mutation12"]
+    "All": ["Hematophagy", "Hydrodynamic", "Photosynthetic Tissue", "Reabsorption", "Hydro-regenerative", "Cellular Regeneration", "Congenital Hypoalgesia", "Submerged Optical Retention ", "Efficient Digestion", "Increased Inspiratory Capacity", "Sustained Hydration", "Enlarged Meniscus", "Infrasound Communication", "Epidermal Fibrosis", "Nocturnal", "Wader", "Featherweight", "Osteosclerosis", "Gastronomic Regeneration", "Traumatic Thrombosis", "Heightened Ghrelin", "Multichambered Lungs", "Enhanced Digestion", "Reinforced Tendons", "Reniculate Kidneys",]
 }
 
-class RegionView(discord.ui.View):
-    def __init__(self, timeout=180):
+class GameModeView(discord.ui.View):
+    def __init__(self, timeout=60):
         super().__init__(timeout=timeout)
         self.value = None
 
-    @discord.ui.select(placeholder="Choose a region", options=[discord.SelectOption(label=region, value=region) for region in EVRIMA_SERVERS.keys()])
+    @discord.ui.select(placeholder="Choose a game mode", options=[discord.SelectOption(label=mode, value=mode) for mode in GAME_MODES])
     async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
         await interaction.response.defer()
         self.value = select.values[0]
+        self.stop()
+
+class RegionView(discord.ui.View):
+    def __init__(self, game_mode: str, timeout=180):
+        super().__init__(timeout=timeout)
+        self.value = None
+        self.game_mode = game_mode
+        # Set up options immediately in __init__
+        self.setup_options()
+
+    def setup_options(self):
+        # Get regions for the selected game mode
+        regions = SERVERS_BY_MODE[self.game_mode].keys()
+        # Create options for each region
+        options = [discord.SelectOption(label=region, value=region) for region in regions]
+        # Add the select menu with these options
+        self.select_menu = discord.ui.Select(
+            placeholder="Choose a region",
+            options=options
+        )
+        self.select_menu.callback = self.select_callback
+        self.add_item(self.select_menu)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.value = self.select_menu.values[0]
         self.stop()
 
 class SelectView(discord.ui.View):
@@ -125,6 +161,7 @@ class DinoTracker(commands.Cog):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 discord_id INTEGER,
                 account_name TEXT,
+                game_mode TEXT,
                 server TEXT,
                 dinosaur TEXT,
                 is_nested BOOLEAN,
@@ -149,12 +186,17 @@ class DinoTracker(commands.Cog):
         if account_name is None:
             return
 
-        # Select region and server
-        region = await self.select_region(interaction)
+        # Select game mode first
+        game_mode = await self.select_game_mode(interaction)
+        if game_mode is None:
+            return
+
+        # Select region and server based on game mode
+        region = await self.select_region(interaction, game_mode)
         if region is None:
             return
         
-        server = await self.select_server(interaction, region)
+        server = await self.select_server(interaction, game_mode, region)
         if server is None:
             return
 
@@ -187,9 +229,10 @@ class DinoTracker(commands.Cog):
         ''', (interaction.user.id, account_name, server))
 
         cursor.execute('''
-            INSERT INTO dino_records (discord_id, account_name, server, dinosaur, is_nested, date_updated)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (interaction.user.id, account_name, server, dinosaur, is_nested, datetime.now()))
+            INSERT INTO dino_records 
+            (discord_id, account_name, game_mode, server, dinosaur, is_nested, date_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (interaction.user.id, account_name, game_mode, server, dinosaur, is_nested, datetime.now()))
         record_id = cursor.lastrowid
 
         for mutation in mutations:
@@ -222,30 +265,53 @@ class DinoTracker(commands.Cog):
         else:
             return "main"
 
-    async def select_region(self, interaction: discord.Interaction) -> Optional[str]:
-        options = [discord.SelectOption(label=region, value=region) for region in EVRIMA_SERVERS.keys()]
-        view = SelectView(options, "Choose a region")
-        message = await interaction.followup.send("Select a region:", view=view, ephemeral=True)
+    async def select_game_mode(self, interaction: discord.Interaction) -> Optional[str]:
+        view = GameModeView()
+        message = await interaction.followup.send("Select a game mode:", view=view, ephemeral=True)
         await view.wait()
         await message.delete()
         return view.value
 
-    async def select_server(self, interaction: discord.Interaction, region: str) -> Optional[str]:
+    async def select_region(self, interaction: discord.Interaction, game_mode: str) -> Optional[str]:
+        try:
+            view = RegionView(game_mode)
+            message = await interaction.followup.send("Select a region:", view=view, ephemeral=True)
+        
+            await view.wait()
+            await message.delete()
+        
+            if view.value is None:
+                await interaction.followup.send("Selection timed out. Please try again.", ephemeral=True)
+                return None
+            
+            return view.value
+        
+        except Exception as e:
+            await interaction.followup.send(f"An error occurred: {str(e)}", ephemeral=True)
+        return None
+
+    async def select_server(self, interaction: discord.Interaction, game_mode: str, region: str) -> Optional[str]:
         while True:
-            options = [discord.SelectOption(label=server, value=server) for server in EVRIMA_SERVERS[region]]
+            options = [
+                discord.SelectOption(label=server, value=server)
+                for server in SERVERS_BY_MODE[game_mode][region]
+            ]
             view = SelectView(options, "Choose a server")
             view.add_item(discord.ui.Button(label="Back", style=discord.ButtonStyle.grey, custom_id="back"))
             message = await interaction.followup.send(f"Select a server in {region}:", view=view, ephemeral=True)
             
             def check(i):
-                return i.user.id == interaction.user.id and (i.data["custom_id"] == view.select_menu.custom_id or i.data["custom_id"] == "back")
+                return i.user.id == interaction.user.id and (
+                    i.data["custom_id"] == view.select_menu.custom_id or 
+                    i.data["custom_id"] == "back"
+                )
 
             try:
                 select_interaction = await self.bot.wait_for("interaction", timeout=60.0, check=check)
                 await message.delete()
                 
                 if select_interaction.data["custom_id"] == "back":
-                    new_region = await self.select_region(interaction)
+                    new_region = await self.select_region(interaction, game_mode)
                     if new_region is None:
                         return None
                     region = new_region
@@ -335,29 +401,37 @@ class DinoTracker(commands.Cog):
     @app_commands.command(name="server_info", description="View dinosaur information for a region")
     async def server_info(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        
-        # Select region (this remains ephemeral)
-        region = await self.select_region(interaction)
-
-        if not region:
+    
+    # Select game mode first
+        game_mode = await self.select_game_mode(interaction)
+        if game_mode is None:
             return
 
-        if region not in EVRIMA_SERVERS:
-            await interaction.followup.send("Invalid region. Please choose from: " + ", ".join(EVRIMA_SERVERS.keys()), ephemeral=True)
+    # Select region based on game mode
+        region = await self.select_region(interaction, game_mode)  # Now passing game_mode
+        if region is None:
             return
 
-        servers = EVRIMA_SERVERS[region]
+        if region not in SERVERS_BY_MODE[game_mode]:
+            await interaction.followup.send(
+                "Invalid region. Please choose from: " + 
+                ", ".join(SERVERS_BY_MODE[game_mode].keys()), 
+                ephemeral=True
+            )
+            return
+
+        servers = SERVERS_BY_MODE[game_mode][region]
         cursor = self.conn.cursor()
 
-        embed = discord.Embed(title=f"Dinosaur Information for {region}", color=discord.Color.blue())
+        embed = discord.Embed(title=f"Dinosaur Information for {region} ({game_mode})", color=discord.Color.blue())
 
         for server in servers:
             cursor.execute('''
                 SELECT dinosaur, is_nested, COUNT(*) as count
                 FROM dino_records
-                WHERE server = ?
+                WHERE server = ? AND game_mode = ?
                 GROUP BY dinosaur, is_nested
-            ''', (server,))
+            ''', (server, game_mode))
             results = cursor.fetchall()
 
             if results:
@@ -369,19 +443,6 @@ class DinoTracker(commands.Cog):
 
         # Send the final embed as a public message
         await interaction.followup.send(embed=embed, ephemeral=False)
-
-    async def select_region(self, interaction: discord.Interaction) -> Optional[str]:
-        view = RegionView()
-        message = await interaction.followup.send("Select a region:", view=view, ephemeral=True)
-
-        await view.wait()
-        await message.delete()
-
-        if view.value is None:
-            await interaction.followup.send("Selection timed out. Please try again.", ephemeral=True)
-            return None
-
-        return view.value
     
     @app_commands.command(name="my_dinos", description="View your dinosaurs across accounts and servers")
     async def my_dinos(self, interaction: discord.Interaction):
