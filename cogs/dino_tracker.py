@@ -6,6 +6,8 @@ import asyncio
 from datetime import datetime
 from typing import List, Optional
 
+GENDERS = ["Male", "Female"]
+
 GAME_MODES = ["Hordetest", "Evrima Public Branch",]
 
 SERVERS_BY_MODE = {
@@ -102,17 +104,18 @@ class DinoTrackerView(discord.ui.View):
         self.current_account = None
         self.current_page = 0
         self.embeds = []
+        
+        # Initialize account select with main account
+        self.account_select = discord.ui.Select(
+            placeholder="Select an account",
+            options=[discord.SelectOption(label="Main Account", value="main")]
+        )
+        self.account_select.callback = self.account_select_callback
+        self.add_item(self.account_select)
 
-    async def setup(self):
-        accounts = await self.cog.get_user_accounts(self.user_id)
-        self.account_select.options = [
-            discord.SelectOption(label=account, value=account) for account in accounts
-        ]
-
-    @discord.ui.select(placeholder="Select an account", row=0)
-    async def account_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+    async def account_select_callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        self.current_account = select.values[0]
+        self.current_account = self.account_select.values[0]
         self.current_page = 0
         await self.update_dino_display(interaction)
 
@@ -164,6 +167,7 @@ class DinoTracker(commands.Cog):
                 game_mode TEXT,
                 server TEXT,
                 dinosaur TEXT,
+                gender TEXT,
                 is_nested BOOLEAN,
                 date_updated TIMESTAMP
             )
@@ -172,6 +176,7 @@ class DinoTracker(commands.Cog):
             CREATE TABLE IF NOT EXISTS mutations (
                 record_id INTEGER,
                 mutation TEXT,
+                is_inherited BOOLEAN,
                 FOREIGN KEY (record_id) REFERENCES dino_records(id)
             )
         ''')
@@ -245,25 +250,53 @@ class DinoTracker(commands.Cog):
 
     async def select_account(self, interaction: discord.Interaction) -> Optional[str]:
         cursor = self.conn.cursor()
-        cursor.execute("SELECT alt_accounts_enabled FROM user_settings WHERE discord_id = ?", (interaction.user.id,))
+    
+        # Check if alt accounts are enabled for this user
+        cursor.execute("""
+            SELECT alt_accounts_enabled, num_alt_accounts 
+            FROM user_settings 
+            WHERE discord_id = ?
+        """, (interaction.user.id,))
+    
         result = cursor.fetchone()
-        alt_accounts_enabled = result[0] if result else False
-
-        if alt_accounts_enabled:
-            cursor.execute("SELECT account_name FROM alt_accounts WHERE discord_id = ?", (interaction.user.id,))
-            alt_accounts = cursor.fetchall()
-            if alt_accounts:
-                options = [discord.SelectOption(label=account[0], value=account[0]) for account in alt_accounts]
-                options.append(discord.SelectOption(label="Main Account", value="main"))
-                view = SelectView(options, "Choose an account")
-                message = await interaction.followup.send("Select an account:", view=view, ephemeral=True)
-                await view.wait()
-                await message.delete()
-                return view.value
-            else:
-                return "main"
-        else:
+        if not result or not result[0]:  # If no settings or alt accounts disabled
             return "main"
+    
+        # Get all alt accounts
+        cursor.execute("""
+            SELECT account_name 
+            FROM alt_accounts 
+            WHERE discord_id = ?
+        """, (interaction.user.id,))
+    
+        alt_accounts = cursor.fetchall()
+        if not alt_accounts:
+            return "main"
+        
+        # Create options for account selection
+        options = [discord.SelectOption(label="Main Account", value="main")]
+        options.extend([
+            discord.SelectOption(label=account[0], value=account[0]) 
+            for account in alt_accounts
+            ])
+    
+        view = SelectView(options, "Choose an account")
+        message = await interaction.followup.send(
+            "Select an account:", 
+            view=view, 
+            ephemeral=True
+            )
+    
+        await view.wait()
+        await message.delete()
+    
+        if view.value is None:
+            await interaction.followup.send(
+                "Selection timed out. Please try again.", 
+                ephemeral=True
+            )
+            return None
+        return view.value
 
     async def select_game_mode(self, interaction: discord.Interaction) -> Optional[str]:
         view = GameModeView()
@@ -446,19 +479,66 @@ class DinoTracker(commands.Cog):
     
     @app_commands.command(name="my_dinos", description="View your dinosaurs across accounts and servers")
     async def my_dinos(self, interaction: discord.Interaction):
+        # Check if alt accounts are enabled
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT alt_accounts_enabled 
+            FROM user_settings 
+            WHERE discord_id = ?
+        """, (interaction.user.id,))
+    
+        result = cursor.fetchone()
+        alt_accounts_enabled = result[0] if result else False
+    
+        if alt_accounts_enabled:
+            # Get all accounts including main
+            cursor.execute("""
+                SELECT account_name 
+                FROM alt_accounts 
+                WHERE discord_id = ?
+            """, (interaction.user.id,))
+        
+            accounts = ["main"] + [row[0] for row in cursor.fetchall()]
+        else:
+            accounts = ["main"]
+    
         view = DinoTrackerView(self, interaction.user.id)
-        await view.setup()
-        await interaction.response.send_message("Loading your dinosaurs...", view=view, ephemeral=True)
+        view.account_select.options = [
+            discord.SelectOption(label=account, value=account) 
+            for account in accounts
+        ]
+    
+        await interaction.response.send_message(
+            "Loading your dinosaurs...", 
+            view=view, 
+            ephemeral=True
+        )
         await view.update_dino_display(interaction)
 
-    async def get_user_accounts(self, user_id: int) -> list:
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT DISTINCT account_name
-            FROM dino_records
-            WHERE discord_id = ?
-        ''', (user_id,))
-        return [row[0] for row in cursor.fetchall()]
+async def get_user_accounts(self, user_id: int) -> list:
+    cursor = self.conn.cursor()
+    
+    # Check if alt accounts are enabled
+    cursor.execute("""
+        SELECT alt_accounts_enabled 
+        FROM user_settings 
+        WHERE discord_id = ?
+    """, (user_id,))
+    
+    result = cursor.fetchone()
+    if not result or not result[0]:
+        return ["main"]
+    
+    # Get all alt accounts
+    cursor.execute("""
+        SELECT account_name 
+        FROM alt_accounts 
+        WHERE discord_id = ?
+    """, (user_id,))
+    
+    accounts = ["main"] + [row[0] for row in cursor.fetchall()]
+    return accounts
+
 
     async def get_account_dinos(self, user_id: int, account_name: str) -> list:
         cursor = self.conn.cursor()
