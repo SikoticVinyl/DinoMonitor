@@ -4,11 +4,11 @@ from discord.ext import commands
 import sqlite3
 import asyncio
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional, List
 
 GENDERS = ["Male", "Female"]
 
-GAME_MODES = ["Hordetest", "Evrima Public Branch",]
+GAME_MODES = ["Hordetest", "Evrima Public Branch"]
 
 SERVERS_BY_MODE = {
     "Hordetest": {
@@ -24,17 +24,9 @@ SERVERS_BY_MODE = {
 }
 
 DINOSAURS = {
-    "Carnivores": ["Carnotaurus", "Ceratosaurus", "Deinosuchus", "Dilophosaurus", "Herrerasaurus", "Omniraptor", "Pteranodon", "Troodon",],
+    "Carnivores": ["Carnotaurus", "Ceratosaurus", "Deinosuchus", "Dilophosaurus", "Herrerasaurus", "Omniraptor", "Pteranodon", "Troodon"],
     "Herbivores": ["Diabloceratops", "Dryosaurus", "Hypsilophodon", "Pachycephalosaurus", "Stegosaurus", "Tenontosaurus"],
-    "Omnivores": ["Bepiposaurus", "Gallimimus", ]
-}
-
-MUTATIONS = {
-    "Female": ["Advanced Gestation", "Prolific Reproduction", "Mutation3"],
-    "Carnivores": ["Accelerated Prey Drive", "Hypermetabolic Inanition", "Hemomania", "Augmented Tapetum", "Cannibalistic", "Osteophagic"],
-    "Herbivores": ["Barometric Sensitivity", "Photosynthetic Regeneration", "Hypervigilance", "Truculency", "Xerocole Adaptation", "Tactile Endurance"],
-    "Omnivores": ["Mutation7", "Mutation8", "Mutation9"],
-    "All": ["Hematophagy", "Hydrodynamic", "Photosynthetic Tissue", "Reabsorption", "Hydro-regenerative", "Cellular Regeneration", "Congenital Hypoalgesia", "Submerged Optical Retention ", "Efficient Digestion", "Increased Inspiratory Capacity", "Sustained Hydration", "Enlarged Meniscus", "Infrasound Communication", "Epidermal Fibrosis", "Nocturnal", "Wader", "Featherweight", "Osteosclerosis", "Gastronomic Regeneration", "Traumatic Thrombosis", "Heightened Ghrelin", "Multichambered Lungs", "Enhanced Digestion", "Reinforced Tendons", "Reniculate Kidneys",]
+    "Omnivores": ["Bepiposaurus", "Gallimimus"]
 }
 
 class GameModeView(discord.ui.View):
@@ -53,19 +45,12 @@ class RegionView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.value = None
         self.game_mode = game_mode
-        # Set up options immediately in __init__
         self.setup_options()
 
     def setup_options(self):
-        # Get regions for the selected game mode
         regions = SERVERS_BY_MODE[self.game_mode].keys()
-        # Create options for each region
         options = [discord.SelectOption(label=region, value=region) for region in regions]
-        # Add the select menu with these options
-        self.select_menu = discord.ui.Select(
-            placeholder="Choose a region",
-            options=options
-        )
+        self.select_menu = discord.ui.Select(placeholder="Choose a region", options=options)
         self.select_menu.callback = self.select_callback
         self.add_item(self.select_menu)
 
@@ -83,29 +68,19 @@ class SelectView(discord.ui.View):
         self.add_item(self.select_menu)
 
     async def select_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         self.value = self.select_menu.values[0]
-        self.stop()
-
-class BackView(discord.ui.View):
-    def __init__(self, timeout=60):
-        super().__init__(timeout=timeout)
-        self.value = None
-
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.grey)
-    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.value = "back"
         self.stop()
 
 class DinoTrackerView(discord.ui.View):
     def __init__(self, cog: 'DinoTracker', user_id: int):
-        super().__init__(timeout=300)  # 5 minute timeout
+        super().__init__(timeout=300)
         self.cog = cog
         self.user_id = user_id
         self.current_account = None
         self.current_page = 0
         self.embeds = []
         
-        # Initialize account select with main account
         self.account_select = discord.ui.Select(
             placeholder="Select an account",
             options=[discord.SelectOption(label="Main Account", value="main")]
@@ -139,17 +114,48 @@ class DinoTrackerView(discord.ui.View):
 
     async def update_dino_display(self, interaction: discord.Interaction):
         if self.current_account:
-            self.embeds = await self.cog.get_account_dinos(self.user_id, self.current_account)
-            if self.embeds:
+            cursor = self.cog.conn.cursor()
+            cursor.execute('''
+                SELECT server, dinosaur, gender, is_nested, date_updated, game_mode
+                FROM dino_records
+                WHERE discord_id = ? AND account_name = ?
+                ORDER BY date_updated DESC
+            ''', (self.user_id, self.current_account))
+            
+            results = cursor.fetchall()
+            self.embeds = []
+            
+            if results:
+                for server, dinosaur, gender, is_nested, date_updated, game_mode in results:
+                    embed = discord.Embed(
+                        title=f"Dinosaur on {server}",
+                        color=discord.Color.green()
+                    )
+                    embed.add_field(name="Account", value=self.current_account, inline=True)
+                    embed.add_field(name="Game Mode", value=game_mode, inline=True)
+                    embed.add_field(name="Dinosaur", value=dinosaur, inline=True)
+                    embed.add_field(name="Gender", value=gender, inline=True)
+                    embed.add_field(name="Nested", value="Yes" if is_nested else "No", inline=True)
+                    embed.add_field(name="Last Updated", value=date_updated, inline=True)
+                    self.embeds.append(embed)
+                
                 embed = self.embeds[self.current_page]
                 embed.set_footer(text=f"Page {self.current_page + 1}/{len(self.embeds)}")
                 self.previous_button.disabled = (self.current_page == 0)
                 self.next_button.disabled = (self.current_page == len(self.embeds) - 1)
                 await interaction.edit_original_response(embed=embed, view=self)
             else:
-                await interaction.edit_original_response(content=f"No dinosaurs found for account: {self.current_account}", embed=None, view=self)
+                await interaction.edit_original_response(
+                    content=f"No dinosaurs found for account: {self.current_account}",
+                    embed=None,
+                    view=self
+                )
         else:
-            await interaction.edit_original_response(content="Please select an account", embed=None, view=self)
+            await interaction.edit_original_response(
+                content="Please select an account",
+                embed=None,
+                view=self
+            )
 
 class DinoTracker(commands.Cog):
     def __init__(self, bot):
@@ -172,62 +178,46 @@ class DinoTracker(commands.Cog):
                 date_updated TIMESTAMP
             )
         ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS mutations (
-                record_id INTEGER,
-                mutation TEXT,
-                is_inherited BOOLEAN,
-                FOREIGN KEY (record_id) REFERENCES dino_records(id)
-            )
-        ''')
         self.conn.commit()
 
     @app_commands.command(name="update_dino", description="Update your dinosaur information")
     async def update_dino(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
-        # Check for alt accounts
         account_name = await self.select_account(interaction)
         if account_name is None:
             return
 
-        # Select game mode first
         game_mode = await self.select_game_mode(interaction)
         if game_mode is None:
             return
 
-        # Select region and server based on game mode
         region = await self.select_region(interaction, game_mode)
         if region is None:
             return
-        
+    
         server = await self.select_server(interaction, game_mode, region)
         if server is None:
             return
 
-        # Select dinosaur type and specific dinosaur
         dino_type = await self.select_dino_type(interaction)
         if dino_type is None:
             return
-        
+    
         dinosaur = await self.select_dinosaur(interaction, dino_type)
         if dinosaur is None:
             return
 
-        # Check if nested
+        gender = await self.select_gender(interaction)
+        if gender is None:
+            return
+
         is_nested = await self.check_if_nested(interaction)
         if is_nested is None:
             return
 
-        # Record mutations if nested
-        mutations = []
-        if is_nested:
-            mutations = await self.select_mutations(interaction, dino_type)
-            if mutations is None:
-                return
-
-        # Save to database
         cursor = self.conn.cursor()
+    
         cursor.execute('''
             DELETE FROM dino_records
             WHERE discord_id = ? AND account_name = ? AND server = ?
@@ -235,18 +225,16 @@ class DinoTracker(commands.Cog):
 
         cursor.execute('''
             INSERT INTO dino_records 
-            (discord_id, account_name, game_mode, server, dinosaur, is_nested, date_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (interaction.user.id, account_name, game_mode, server, dinosaur, is_nested, datetime.now()))
-        record_id = cursor.lastrowid
-
-        for mutation in mutations:
-            cursor.execute("INSERT INTO mutations (record_id, mutation) VALUES (?, ?)",
-                           (record_id, mutation))
-
+            (discord_id, account_name, game_mode, server, dinosaur, gender, is_nested, date_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (interaction.user.id, account_name, game_mode, server, dinosaur, gender, is_nested, datetime.now()))
+    
         self.conn.commit()
 
-        await interaction.followup.send(f"Updated dinosaur information for {account_name} on {server}", ephemeral=True)
+        await interaction.followup.send(
+            f"Updated dinosaur information for {account_name} on {server}", 
+            ephemeral=True
+        )
 
     async def select_account(self, interaction: discord.Interaction) -> Optional[str]:
         cursor = self.conn.cursor()
@@ -388,6 +376,14 @@ class DinoTracker(commands.Cog):
                 await message.delete()
                 await interaction.followup.send("Selection timed out. Please try again.", ephemeral=True)
                 return None
+    
+    async def select_gender(self, interaction: discord.Interaction) -> Optional[str]:
+        options = [discord.SelectOption(label=gender, value=gender) for gender in GENDERS]
+        view = SelectView(options, "Choose gender")
+        message = await interaction.followup.send("Select gender:", view=view, ephemeral=True)
+        await view.wait()
+        await message.delete()
+        return view.value
 
     async def check_if_nested(self, interaction: discord.Interaction) -> Optional[bool]:
         view = discord.ui.View()
@@ -410,38 +406,15 @@ class DinoTracker(commands.Cog):
             await interaction.followup.send("Selection timed out. Please try again.", ephemeral=True)
             return None
 
-    async def select_mutations(self, interaction: discord.Interaction, dino_type: str) -> Optional[List[str]]:
-        available_mutations = MUTATIONS[dino_type] + MUTATIONS["All"]
-        options = [discord.SelectOption(label=mutation, value=mutation) for mutation in available_mutations]
-        select_menu = discord.ui.Select(placeholder="Choose mutations", options=options, max_values=len(options))
-        view = discord.ui.View()
-        view.add_item(select_menu)
-
-        message = await interaction.followup.send("Select mutations (if any):", view=view, ephemeral=True)
-
-        def check(i):
-            return i.user.id == interaction.user.id and i.data["custom_id"] == select_menu.custom_id
-
-        try:
-            select_interaction = await self.bot.wait_for("interaction", timeout=60.0, check=check)
-            await message.delete()
-            return select_interaction.data["values"]
-        except asyncio.TimeoutError:
-            await message.delete()
-            await interaction.followup.send("Selection timed out. Please try again.", ephemeral=True)
-            return None
-
     @app_commands.command(name="server_info", description="View dinosaur information for a region")
     async def server_info(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
     
-    # Select game mode first
         game_mode = await self.select_game_mode(interaction)
         if game_mode is None:
             return
 
-    # Select region based on game mode
-        region = await self.select_region(interaction, game_mode)  # Now passing game_mode
+        region = await self.select_region(interaction, game_mode)
         if region is None:
             return
 
@@ -456,7 +429,10 @@ class DinoTracker(commands.Cog):
         servers = SERVERS_BY_MODE[game_mode][region]
         cursor = self.conn.cursor()
 
-        embed = discord.Embed(title=f"Dinosaur Information for {region} ({game_mode})", color=discord.Color.blue())
+        embed = discord.Embed(
+            title=f"Dinosaur Information for {region} ({game_mode})",
+            color=discord.Color.blue()
+        )
 
         for server in servers:
             cursor.execute('''
@@ -465,21 +441,27 @@ class DinoTracker(commands.Cog):
                 WHERE server = ? AND game_mode = ?
                 GROUP BY dinosaur, is_nested
             ''', (server, game_mode))
+            
             results = cursor.fetchall()
 
             if results:
-                server_info = "\n".join([f"{dino}({'N' if nested else ''}) - {count}" for dino, nested, count in results])
+                server_info = "\n".join([
+                    f"{dino}({'N' if nested else ''}) - {count}"
+                    for dino, nested, count in results
+                ])
                 total_dinos = sum([count for _, _, count in results])
-                embed.add_field(name=f"{server} - {total_dinos} dinos", value=server_info, inline=False)
+                embed.add_field(
+                    name=f"{server} - {total_dinos} dinos",
+                    value=server_info,
+                    inline=False
+                )
             else:
                 embed.add_field(name=server, value="No data available", inline=False)
 
-        # Send the final embed as a public message
         await interaction.followup.send(embed=embed, ephemeral=False)
     
     @app_commands.command(name="my_dinos", description="View your dinosaurs across accounts and servers")
     async def my_dinos(self, interaction: discord.Interaction):
-        # Check if alt accounts are enabled
         cursor = self.conn.cursor()
         cursor.execute("""
             SELECT alt_accounts_enabled 
@@ -491,13 +473,11 @@ class DinoTracker(commands.Cog):
         alt_accounts_enabled = result[0] if result else False
     
         if alt_accounts_enabled:
-            # Get all accounts including main
             cursor.execute("""
                 SELECT account_name 
                 FROM alt_accounts 
                 WHERE discord_id = ?
             """, (interaction.user.id,))
-        
             accounts = ["main"] + [row[0] for row in cursor.fetchall()]
         else:
             accounts = ["main"]
@@ -514,63 +494,6 @@ class DinoTracker(commands.Cog):
             ephemeral=True
         )
         await view.update_dino_display(interaction)
-
-async def get_user_accounts(self, user_id: int) -> list:
-    cursor = self.conn.cursor()
-    
-    # Check if alt accounts are enabled
-    cursor.execute("""
-        SELECT alt_accounts_enabled 
-        FROM user_settings 
-        WHERE discord_id = ?
-    """, (user_id,))
-    
-    result = cursor.fetchone()
-    if not result or not result[0]:
-        return ["main"]
-    
-    # Get all alt accounts
-    cursor.execute("""
-        SELECT account_name 
-        FROM alt_accounts 
-        WHERE discord_id = ?
-    """, (user_id,))
-    
-    accounts = ["main"] + [row[0] for row in cursor.fetchall()]
-    return accounts
-
-
-    async def get_account_dinos(self, user_id: int, account_name: str) -> list:
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT dr1.server, dr1.dinosaur, dr1.is_nested, dr1.date_updated, GROUP_CONCAT(m.mutation, ', ') as mutations
-            FROM dino_records dr1
-            LEFT JOIN mutations m ON dr1.id = m.record_id
-            WHERE dr1.discord_id = ? AND dr1.account_name = ?
-            AND dr1.date_updated = (
-                SELECT MAX(dr2.date_updated)
-                FROM dino_records dr2
-                WHERE dr2.discord_id = dr1.discord_id
-                AND dr2.account_name = dr1.account_name
-                AND dr2.server = dr1.server
-            )
-            GROUP BY dr1.server
-            ORDER BY dr1.date_updated DESC
-        ''', (user_id, account_name))
-        
-        results = cursor.fetchall()
-        embeds = []
-        for server, dinosaur, is_nested, date_updated, mutations in results:
-            embed = discord.Embed(title=f"Dinosaur on {server}", color=discord.Color.green())
-            embed.add_field(name="Account", value=account_name, inline=True)
-            embed.add_field(name="Dinosaur", value=dinosaur, inline=True)
-            embed.add_field(name="Nested", value="Yes" if is_nested else "No", inline=True)
-            embed.add_field(name="Last Updated", value=date_updated, inline=True)
-            if mutations:
-                embed.add_field(name="Mutations", value=mutations, inline=False)
-            embeds.append(embed)
-        return embeds
-
 
 async def setup(bot):
     await bot.add_cog(DinoTracker(bot))
