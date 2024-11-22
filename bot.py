@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import os
 from dotenv import load_dotenv
+from keep_alive import keep_alive
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
@@ -102,4 +103,5 @@ async def clear_commands(interaction: discord.Interaction):
         await interaction.followup.send(f"An error occurred while clearing and re-syncing commands: {str(e)}")
 
 if __name__ == "__main__":
+    keep_alive()
     bot.run(TOKEN)
