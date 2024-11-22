@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-GUILD_ID = os.getenv('TEST_GUILD_ID')
+GUILD_ID = os.getenv('GUILD_ID')
 SIK_ID = int(os.getenv('SIK_ID'))
 
 def is_owner():
@@ -22,7 +22,12 @@ class DinoBot(commands.Bot):
 
     async def setup_hook(self):
         print("Setting up bot...")
-        # Cog loading logic
+        # Clear any existing commands first
+        self.tree.clear_commands(guild=None)
+        await self.tree.sync()
+        print("Cleared all global commands")
+        
+        # Load cogs
         cogs_folder = './cogs'
         if os.path.exists(cogs_folder) and os.path.isdir(cogs_folder):
             for filename in os.listdir(cogs_folder):
@@ -35,15 +40,9 @@ class DinoBot(commands.Bot):
         else:
             print('No cogs found. Skipping cog loading.')
         
-        print("Syncing commands...")
-        if GUILD_ID:
-            guild = discord.Object(id=int(GUILD_ID))
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            print(f"Synced commands to guild: {GUILD_ID}")
-        else:
-            await self.tree.sync()
-            print("Synced commands globally")
+        # Sync commands globally
+        await self.tree.sync()
+        print("Synced commands globally")
 
     async def on_ready(self):
         print(f'{self.user.name} has connected to Discord!')
