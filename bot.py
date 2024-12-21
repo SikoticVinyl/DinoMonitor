@@ -3,7 +3,6 @@ from discord.ext import commands
 from discord import app_commands
 import os
 from dotenv import load_dotenv
-from keep_alive import keep_alive
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN') 
@@ -95,7 +94,6 @@ async def on_command_error(ctx, error):
 
 if __name__ == "__main__":
     try:
-        keep_alive()
         print("Starting DinoBot...")
         bot.run(TOKEN)
     except discord.errors.LoginFailure:
