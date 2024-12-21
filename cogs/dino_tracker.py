@@ -12,20 +12,20 @@ GAME_MODES = ["Hordetest", "Evrima Public Branch"]
 
 SERVERS_BY_MODE = {
     "Hordetest": {
-        "Americas": ["NA 1 - West", "NA 2 - West", "NA 3 - East", "NA 4 - East"],
-        "Europe": ["EU 1 - West", "EU 2 - Central", "EU 3 - Central"],
+        "Americas": ["NA 1 - West", "NA 2 - West No AI", "NA 3 - East", "NA 4 - East"],
+        "Europe": ["EU 1 - West", "EU 2 - Central", "EU 3 - Central No AI", "EU 4 - Central"],
     },
     "Evrima Public Branch": {
         "Americas": ["NA 2 - West", "NA 3 - West", "NA 4 - East", "NA 5- East", "CA 1 - Central", "SA 1 - East", "SA 2 - East"],
-        "Europe": ["EU 1 - West", "EU 2 - West", "EU 3 - West", "EU 4 - Central", "EU 5 - North", "EU 6 - South"],
+        "Europe": ["EU 1 - West", "EU 2 - West", "EU 3 - West", "EU 4 - Central", "EU 5 - North", "EU 6 - South", "EU 7 - South"],
         "Asia": ["AS 1 - South East", "AS 2 - South", "AS 3 - East"],
-        "Australia": ["AU 1 - East"]
+        "Australia": ["AU 1 - East", "AU 2 - East"]
     }
 }
 
 DINOSAURS = {
     "Carnivores": ["Carnotaurus", "Ceratosaurus", "Deinosuchus", "Dilophosaurus", "Herrerasaurus", "Omniraptor", "Pteranodon", "Troodon"],
-    "Herbivores": ["Diabloceratops", "Dryosaurus", "Hypsilophodon", "Pachycephalosaurus", "Stegosaurus", "Tenontosaurus"],
+    "Herbivores": ["Diabloceratops", "Dryosaurus", "Hypsilophodon", "Pachycephalosaurus", "Stegosaurus", "Tenontosaurus", "Maiasaura"],
     "Omnivores": ["Bepiposaurus", "Gallimimus"]
 }
 
